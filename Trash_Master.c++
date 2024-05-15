@@ -39,11 +39,8 @@ public:
     digitalWrite(triggerPin, LOW);
     pinMode(echoPin, INPUT);
 
-    // Leer el pulso y medir la duración del eco
     long duration = pulseIn(echoPin, HIGH);
-
-    // Retardo ajustable entre las lecturas del sensor ultrasónico
-    delay(500); // Ajusta este valor según sea necesario
+    delay(500); 
 
     return duration;
   }
@@ -66,14 +63,12 @@ public:
     scale.tare();
 
     if (previousDistance < 10) {
-      // Si la distancia es menor a 10 cm, levanta el servo por 5 segundos
-      myServo.write(90); // Suponiendo que 90 grados levanta el servo
-      delay(5000);       // Levantar por 5 segundos
-      myServo.write(0);  // Volver el servo a posición inicial
-      delay(1000);       // Esperar 1 segundo
+      myServo.write(90); 
+      delay(5000);     
+      myServo.write(0);  
+      delay(1000);      
     }
 
-    // Realizar la lectura del sensor de peso continuamente
     float weight = scale.get_units(3);
     Serial.print("Lectura: ");
     Serial.print(weight, 3);
