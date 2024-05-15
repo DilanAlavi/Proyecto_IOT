@@ -4,7 +4,6 @@
 #include <Servo.h>
 #include <HX711.h>
 
-// Definiciones de pines y constantes
 const int LED = 2; // Ejemplo de pin para el LED
 const char* WIFI_SSID = "tu_wifi_ssid";
 const char* WIFI_PASS = "tu_wifi_pass";
