@@ -1,12 +1,13 @@
 #include <WiFiClientSecure.h>
+#include <WiFiManager.h>   // WiFiManager library
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
 #include "HX711.h"
 //const char * WIFI_SSID = "COMTECO-N4197055";
 //const char * WIFI_PASS = "VDLTT61050";
-const char * WIFI_SSID = "real";
-const char * WIFI_PASS = "11111111";
+//const char * WIFI_SSID = "real";
+//const char * WIFI_PASS = "11111111";
 
 const char * MQTT_BROKER_HOST = "a1vcxnn8t7r7t-ats.iot.us-east-2.amazonaws.com";
 const int MQTT_BROKER_PORT = 8883;
@@ -103,171 +104,151 @@ StaticJsonDocument<JSON_OBJECT_SIZE(8)> outputDoc;
 char outputBuffer[128];
 bool isMyGarbage = false;
 unsigned char builtInLed = 0;
-unsigned char lastReportedLed = 255;  // Valor inicial fuera del rango esperado (0 o 1) para garantizar el primer reporte
-float lastReportedWeight = 0.0; // Inicializa con un valor adecuado según tu aplicación
- int echoPin = 26; 
-int triggerPin = 27; 
-  const int PIN_SCK = 5;
-  const int PIN_DT = 15;
-  const int SERVO_PIN = 23;
-    Servo myServo;
-  HX711 scale;
-  float weight = 0.0;
+unsigned char lastReportedLed = 255; 
+unsigned char change_distance = 10;
+float lastReportedWeight = 0.0; 
+int echoPin = 26;
+int triggerPin = 27;
+const int PIN_SCK = 5;
+const int PIN_DT = 15;
+const int SERVO_PIN = 23;
+Servo myServo;
+HX711 scale;
+float weight = 0.0;
 
 long readUltrasonicDistance(int triggerPin, int echoPin) {
-  pinMode(triggerPin, OUTPUT); 
-  digitalWrite(triggerPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(triggerPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(triggerPin, LOW);
-  pinMode(echoPin, INPUT);
-  
-  // Leer el pulso y medir la duración del eco
-  long duration = pulseIn(echoPin, HIGH);
-  
-  // Retardo ajustable entre las lecturas del sensor ultrasónico
-  delay(500); 
-  
-  return duration;
+    pinMode(triggerPin, OUTPUT);
+    digitalWrite(triggerPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(triggerPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(triggerPin, LOW);
+    pinMode(echoPin, INPUT);
+    long duration = pulseIn(echoPin, HIGH);
+    delay(500);
+    return duration;
 }
 
 void reportBuiltInLed() {
-  if (builtInLed != lastReportedLed || weight != lastReportedWeight) {  // Reportar si el estado del LED o el peso han cambiado
-    outputDoc["state"]["reported"]["EcoTrash"] = builtInLed;
-    outputDoc["state"]["reported"]["weight"] = weight;
-    serializeJson(outputDoc, outputBuffer);
-    mqttClient.publish(UPDATE_TOPIC, outputBuffer);
-    lastReportedLed = builtInLed;
-    lastReportedWeight = weight;  // Actualizar el último peso reportado
-    Serial.println("Reported LED state: " + String(builtInLed) + ", Weight: " + String(weight));
-  }
+    if (builtInLed != lastReportedLed || weight != lastReportedWeight) {
+        outputDoc["state"]["reported"]["EcoTrash"] = builtInLed;
+        outputDoc["state"]["reported"]["weight"] = String(weight, 2);
+        outputDoc["state"]["reported"]["change_distance"] = change_distance;
+        serializeJson(outputDoc, outputBuffer);
+        mqttClient.publish(UPDATE_TOPIC, outputBuffer);
+        lastReportedLed = builtInLed;
+        lastReportedWeight = weight;
+        Serial.println("Reported LED state: " + String(builtInLed) + ", Weight: " + String(weight, 2));
+    }
 }
-
 
 void liftServo() {
-
-
-  myServo.attach(SERVO_PIN);
-  scale.begin(PIN_DT, PIN_SCK);
-  
-  float calibration_factor = 130; 
-  scale.set_scale(calibration_factor); 
-  scale.tare(); 
-
- 
-    myServo.write(90); 
-    delay(5000); 
+    myServo.attach(SERVO_PIN);
     myServo.write(0); 
-    delay(1000); 
-  
-   weight = scale.get_units(3); 
-  Serial.print("Lectura: ");
-  Serial.print(weight, 3);
-  Serial.println(" kg");
-  
-  delay(1000); 
-}
+    delay(5000);    
+    myServo.write(90); 
+    delay(2000);      
+    float totalWeight = 0.0;
+    int numReadings = 10;
+    for (int i = 0; i < numReadings; ++i) {
+        totalWeight += scale.get_units(1);
+        delay(500);
+    }
+    weight = (totalWeight / numReadings) ;
+    Serial.print("Peso estabilizado: ");
+    Serial.print(weight, 3);
+    Serial.println(" g");
+    delay(1000);
+} 
 
 void setBuiltInLed() {
-    if(builtInLed)
-    {
-      digitalWrite(LED, HIGH);
-       //liftServo(); 
-     } else {
-    digitalWrite(LED, LOW);
-  }
-    //reportBuiltInLed();
+    if (builtInLed) {
+        digitalWrite(LED, HIGH);
+    } else {
+        digitalWrite(LED, LOW);
+    }
     Serial.println("Set LED to: " + String(builtInLed));
-  }
+}
 
-// Callback para procesar los mensajes MQTT recibidos
-void callback(const char * topic, byte * payload, unsigned int length) {
-  String message;
-  for (int i = 0; i < length; i++) message += String((char) payload[i]);
-  Serial.println("Message from topic " + String(topic) + ": " + message);
-
-  DeserializationError err = deserializeJson(inputDoc, payload);
-  if (!err) {
-    if (inputDoc["state"]["desired"].containsKey("objectid")) {
-      String tmpObjectId = String(inputDoc["state"]["desired"]["objectid"].as<const char*>());
-      isMyGarbage = tmpObjectId.equals(OBJECT_ID);
-      Serial.println("isMyGarbage: " + String(isMyGarbage));
+void callback(const char *topic, byte *payload, unsigned int length) {
+    String message;
+    for (int i = 0; i < length; i++) message += String((char) payload[i]);
+    Serial.println("Message from topic " + String(topic) + ": " + message);
+    DeserializationError err = deserializeJson(inputDoc, payload);
+    if (!err) {
+        if (inputDoc["state"]["desired"].containsKey("objectid")) {
+            String tmpObjectId = String(inputDoc["state"]["desired"]["objectid"].as<const char*>());
+            isMyGarbage = tmpObjectId.equals(OBJECT_ID);
+            Serial.println("isMyGarbage: " + String(isMyGarbage));
+        }
+        if (inputDoc["state"]["desired"].containsKey("EcoTrash")) {
+            builtInLed = inputDoc["state"]["desired"]["EcoTrash"].as<int8_t>();
+            Serial.println("EcoTrash value received: " + String(builtInLed));
+        }
+        if (inputDoc["state"]["desired"].containsKey("change_distance")) {
+            change_distance = inputDoc["state"]["desired"]["change_distance"].as<int8_t>();
+            Serial.println("change_distance value received: " + String(change_distance));
+        }
+        if (isMyGarbage) {
+            setBuiltInLed();
+            reportBuiltInLed();
+        }
+    } else {
+        Serial.println("Failed to parse JSON");
     }
-
-    if (inputDoc["state"]["desired"].containsKey("EcoTrash")) {
-      builtInLed = inputDoc["state"]["desired"]["EcoTrash"].as<int8_t>();
-      Serial.println("EcoTrash value received: " + String(builtInLed));
-    }
-    
-    if (isMyGarbage) {
-      setBuiltInLed();
-      reportBuiltInLed();
-    }
-  } else {
-    Serial.println("Failed to parse JSON");
-  }
 }
 
 void setup() {
-  pinMode(LED, OUTPUT);
-  Serial.begin(115200);
+    pinMode(LED, OUTPUT);
+    Serial.begin(115200);
+    WiFiManager wifiManager;
+    wifiManager.autoConnect("ESP32_AP");
 
-  Serial.print("Connecting to " + String(WIFI_SSID));
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
-    Serial.print(".");
-  }
-  Serial.println(" Connected!");
+    scale.begin(PIN_DT, PIN_SCK);
+    scale.set_scale();
+    scale.tare();
 
-  wiFiClient.setCACert(AMAZON_ROOT_CA1);
-  wiFiClient.setCertificate(CERTIFICATE);
-  wiFiClient.setPrivateKey(PRIVATE_KEY);
+    wiFiClient.setCACert(AMAZON_ROOT_CA1);
+    wiFiClient.setCertificate(CERTIFICATE);
+    wiFiClient.setPrivateKey(PRIVATE_KEY);
 
-  mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
-  mqttClient.setCallback(callback);
+    mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+    mqttClient.setCallback(callback);
 
-  Serial.print("Connecting to " + String(MQTT_BROKER_HOST));
-  if (mqttClient.connect(MQTT_CLIENT_ID)) {
-    Serial.println(" Connected!");
-
-    delay(100);
-    mqttClient.subscribe(SUBSCRIBE_TOPIC);
-    Serial.println("Subscribed to " + String(SUBSCRIBE_TOPIC));
-
-    delay(100);
-    reportBuiltInLed();
-  } else {
-    Serial.println("MQTT connection failed");
-  }
+    Serial.print("Connecting to " + String(MQTT_BROKER_HOST));
+    if (mqttClient.connect(MQTT_CLIENT_ID)) {
+        Serial.println(" Connected!");
+        delay(100);
+        mqttClient.subscribe(SUBSCRIBE_TOPIC);
+        Serial.println("Subscribed to " + String(SUBSCRIBE_TOPIC));
+        delay(100);
+        reportBuiltInLed();
+    } else {
+        Serial.println("MQTT connection failed");
+    }
 }
 
 void loop() {
-  if (mqttClient.connected()) {
-    mqttClient.loop();
-  } else {
-    Serial.println("MQTT broker not connected!");
-    delay(2000);
-    // Reconnect logic
-    if (mqttClient.connect(MQTT_CLIENT_ID)) {
-      Serial.println("Reconnected to MQTT broker");
-      mqttClient.subscribe(SUBSCRIBE_TOPIC);
+    if (mqttClient.connected()) {
+        mqttClient.loop();
+    } else {
+        Serial.println("MQTT broker not connected!");
+        delay(2000);
+        if (mqttClient.connect(MQTT_CLIENT_ID)) {
+            Serial.println("Reconnected to MQTT broker");
+            mqttClient.subscribe(SUBSCRIBE_TOPIC);
+        }
     }
-  }
-if (isMyGarbage) {
-  // Lectura continua del sensor ultrasónico
-  if (builtInLed == 1) {
-    long duration = readUltrasonicDistance(triggerPin, echoPin);
-    float distance_cm = duration * 0.034 / 2;
-    Serial.print("Distancia: ");
-    Serial.println(distance_cm, 3);
-    
-    // Si la distancia es menor a 15 cm, levanta el servo y reporta el estado del LED
-    if (distance_cm < 15) {
-      liftServo();
-      reportBuiltInLed();
+    if (isMyGarbage) {
+        if (builtInLed == 1) {
+            long duration = readUltrasonicDistance(triggerPin, echoPin);
+            float distance_cm = duration * 0.034 / 2;
+            Serial.print("Distancia: ");
+            Serial.println(distance_cm, 3);
+            if (distance_cm < change_distance) {
+                liftServo();
+                reportBuiltInLed();
+            }
+        }
     }
-  }
-  }
 }
